@@ -68,8 +68,10 @@ async fn main() {
     let (config, sun_happenings, client_getter, client_putter) = initialize();
 
     info!("entering main loop");
+    println!("entering main loop");
 
     loop {
+        println!("looping");
         let (now_seconds, ordinal) = get_now(config.hour_offset);
         let door_status = get_door_status(client_getter.try_clone()).await;
         let is_daylight = is_daylight(now_seconds, sun_happenings[ordinal].sunrise, sun_happenings[ordinal].sunset);
