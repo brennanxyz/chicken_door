@@ -92,10 +92,11 @@ fn initialize() -> (Config, Vec<SunHappening>, RequestBuilder, RequestBuilder) {
                 message
             ))
         })
-        .level(log::LevelFilter::Info);
+        .level(log::LevelFilter::Info)
+        .chain(std::io::stdout())
+        .chain(fern::log_file("logs/chicken_door.log").unwrap())
+        .apply().unwrap();
 
-    log_config = log_config.chain(fern::log_file("chicken_door.log").unwrap());
-    log_config.apply().unwrap();
 
     // get config
     let mut file = File::open(".config.toml").unwrap();
