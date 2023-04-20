@@ -3,13 +3,13 @@ use std::io::Read;
 use std::thread;
 use std::time;
 
+use axum::{routing::get, Router,};
 use chrono::{Datelike, Duration, Local, Timelike, Utc};
 use fern;
 use log::{info, warn, error};
-use reqwest;
-use reqwest::RequestBuilder;
 use serde::{Serialize, Deserialize};
 use serde_json;
+use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase, Row};
 use tokio;
 use toml;
 
@@ -35,11 +35,6 @@ enum DoorAction {
     Pass,
 }
 
-#[derive(Deserialize, Debug)]
-struct DoorResponse {
-    record: DoorRecord,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 struct DoorRecord {
     executed: bool,
@@ -51,39 +46,64 @@ struct DoorRecord {
 struct Config {
     interval_seconds: u64,
     hour_offset: i64,
-    json_bin: JSONBin,
 }
 
-#[derive(Deserialize, Clone)]
-struct JSONBin {
-    base_url: String,
-    master_key: String,
-    access_key: String,
-    bin_id: String,
-}
+const DB_URL: &str = "sqlite://chicken_door.db";
 
 #[tokio::main]
 async fn main() {
 
-    let (config, sun_happenings, client_getter, client_putter) = initialize();
+    let (config, sun_happenings) = initialize().await;
 
     info!("entering main loop");
 
-    loop {
-        let (now_seconds, ordinal) = get_now(config.hour_offset);
-        let door_status = get_door_status(client_getter.try_clone()).await;
-        let is_daylight = is_daylight(now_seconds, sun_happenings[ordinal].sunrise, sun_happenings[ordinal].sunset);
-        let suggestion = suggest_action(door_status, is_daylight);
-        politely_carry_out_suggestion(suggestion, client_putter.try_clone()).await;
+    let pool = match SqlitePool::connect(DB_URL).await {
+        Ok(pool) => {
+            info!("connected to db");
+            pool
+        },
+        Err(error) => {
+            error!("cannot connect to db: {}", error);
+            panic!("error: {}", error);
+        }
+    };
 
-        let interval_seconds = time::Duration::from_secs(config.interval_seconds);
-        thread::sleep(interval_seconds);
-    }; 
+    thread::spawn(move || {
+        loop {
+            info!("loop hit");
+            let (now_seconds, ordinal) = get_now(config.hour_offset);
+            let is_daylight = is_daylight(now_seconds, sun_happenings[ordinal].sunrise, sun_happenings[ordinal].sunset);
+            
+            tokio::runtime::Runtime::new().unwrap().handle().block_on(async {
+                let door_status = get_door_status(&pool).await;
+                println!("door status: {:?}", door_status);
+                let suggestion = suggest_action(door_status, is_daylight);
+                politely_carry_out_suggestion(suggestion, &pool).await;
+            });
+
+            let interval_seconds = time::Duration::from_secs(config.interval_seconds);
+            thread::sleep(interval_seconds);
+        }; 
+    });
+
+    let app = Router::new()
+        .route("/", get(|| async { "Hello, World!" }))
+        .route("/door_status", get(door_status));
+
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+
 }
 
-fn initialize() -> (Config, Vec<SunHappening>, RequestBuilder, RequestBuilder) {
+async fn door_status() -> &'static str {
+    "door status"
+}
+
+async fn initialize() -> (Config, Vec<SunHappening>) {
     // set up logging
-    let mut log_config = fern::Dispatch::new()
+    let _log_config = fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
                 "{},{},{}",
@@ -97,6 +117,47 @@ fn initialize() -> (Config, Vec<SunHappening>, RequestBuilder, RequestBuilder) {
         .chain(fern::log_file("logs/chicken_door.log").unwrap())
         .apply().unwrap();
 
+    // set up database
+    if !Sqlite::database_exists(DB_URL).await.unwrap_or(false) {
+        info!("creating database {}", DB_URL);
+        match Sqlite::create_database(DB_URL).await {
+            Ok(_) => info!("create db success"),
+            Err(error) => panic!("error: {}", error),
+        }
+
+        let pool = match SqlitePool::connect(DB_URL).await {
+            Ok(pool) => {
+                info!("connected to db");
+                pool
+            },
+            Err(error) => {
+                error!("{}", error);
+                panic!("error: {}", error);
+            }
+        };
+        
+        //run migrations
+        match sqlx::query("CREATE TABLE IF NOT EXISTS door_status (id INTEGER PRIMARY KEY NOT NULL, executed INTEGER NOT NULL, up INTEGER NOT NULL, amount INTEGER NOT NULL);").execute(&pool).await {
+            Ok(_) => info!("create table success"),
+            Err(error) => {
+                error!("{}", error);
+                panic!("error: {}", error);
+            }
+        }
+    
+        // add entry to pool
+        match sqlx::query("INSERT INTO door_status (executed, up, amount) VALUES (1, 1, 10)").execute(&pool).await {
+            Ok(_) => info!("create table success"),
+            Err(error) => {
+                error!("{}", error);
+                panic!("error: {}", error);
+            }
+        }
+
+    } else {
+        info!("db already exists");
+    }
+    
 
     // get config
     let mut file = File::open(".config.toml").unwrap();
@@ -111,20 +172,20 @@ fn initialize() -> (Config, Vec<SunHappening>, RequestBuilder, RequestBuilder) {
     let sun_happenings: Vec<SunHappening> = serde_json::from_str(&buff).unwrap();
 
     // make clients
-    let client = reqwest::Client::new();
-    let json_bin_getter_copy = config.json_bin.clone();
-    let client_getter = client.get(&format!("{}/{}", config.json_bin.base_url, config.json_bin.bin_id))
-        .header("X-Master-Key", json_bin_getter_copy.master_key)
-        .header("X-Client-Key", json_bin_getter_copy.access_key)
-        .header("Content-Type", "application/json");
-    let json_bin_putter_copy = config.json_bin.clone();
-    let client_putter = client.put(&format!("{}/{}", config.json_bin.base_url, config.json_bin.bin_id))
-        .header("X-Master-Key", json_bin_putter_copy.master_key)
-        .header("X-Client-Key", json_bin_putter_copy.access_key)
-        .header("Content-Type", "application/json");
+    // let client = reqwest::Client::new();
+    // let json_bin_getter_copy = config.json_bin.clone();
+    // let client_getter = client.get(&format!("{}/{}", config.json_bin.base_url, config.json_bin.bin_id))
+    //     .header("X-Master-Key", json_bin_getter_copy.master_key)
+    //     .header("X-Client-Key", json_bin_getter_copy.access_key)
+    //     .header("Content-Type", "application/json");
+    // let json_bin_putter_copy = config.json_bin.clone();
+    // let client_putter = client.put(&format!("{}/{}", config.json_bin.base_url, config.json_bin.bin_id))
+    //     .header("X-Master-Key", json_bin_putter_copy.master_key)
+    //     .header("X-Client-Key", json_bin_putter_copy.access_key)
+    //     .header("Content-Type", "application/json");
 
     // return initialization bundle
-    (config, sun_happenings, client_getter, client_putter)
+    (config, sun_happenings)
 }
 
 fn get_now(hour_offset: i64) -> (u32, usize) {
@@ -136,49 +197,41 @@ fn get_now(hour_offset: i64) -> (u32, usize) {
 }
 
 fn is_daylight(now_seconds: u32, sunrise: f32, sunset: f32) -> bool {
-    if now_seconds as f32 > sunrise && (now_seconds as f32) < sunset + 3600.0 {
+    if now_seconds as f32 > sunrise && (now_seconds as f32) < sunset + 1800.0 {
         return true;
     } else {
         return false;
     }
 }
 
-async fn get_door_status(client: Option<RequestBuilder>) -> DoorStatus {
-    match client {
-        Some(client) => {
-            match client.send().await {
-                Ok(response) => {
-                    match response.json::<DoorResponse>().await {
-                        Ok(door_response) => {
-                            if door_response.record.direction == "up" && door_response.record.executed == true {
-                                return DoorStatus::Open;
-                            } else if door_response.record.direction == "down" && door_response.record.executed == true {
-                                return DoorStatus::Closed;
-                            } else if door_response.record.direction == "up" && door_response.record.executed == false {
-                                return DoorStatus::Opening;
-                            } else if door_response.record.direction == "down" && door_response.record.executed == false {
-                                return DoorStatus::Closing;
-                            } else {
-                                return DoorStatus::Unknown;
-                            }
-                        },
-                        Err(e) => {
-                            error!("get_door_status() error parsing json: {}", e);
-                            return DoorStatus::Unknown;
-                        }
-                    }
-                },
-                _ => {
-                    error!("get_door_status() no response");
-                    return DoorStatus::Unknown;
-                }
-            }
-        },
-        None => {
-            error!("get_door_status() no client");
+async fn get_door_status(pool: &SqlitePool) -> DoorStatus {
+
+    // retrieve first entry from db
+    let row = match sqlx::query("SELECT * FROM door_status ORDER BY id DESC LIMIT 1")
+        .fetch_one(pool).await {
+        Ok(row) => row,
+        Err(error) => {
+            error!("get_door_status() error retrieving row from db: {}", error);
             return DoorStatus::Unknown;
         }
+    };
+      
+    let columns = vec!["executed", "up", "amount"];
+
+    let column_vals: Vec<u32> = columns.into_iter().map(|col_name| row.get::<u32, &str>(col_name)).collect();
+
+    if column_vals[0] == 1 && column_vals[1] == 1 {
+        return DoorStatus::Open;
+    } else if column_vals[0] == 1 && column_vals[1] == 0 {
+        return DoorStatus::Closed;
+    } else if column_vals[0] == 0 && column_vals[1] == 1 {
+        return DoorStatus::Opening;
+    } else if column_vals[0] == 0 && column_vals[1] == 0 {
+        return DoorStatus::Closing;
+    } else {
+        return DoorStatus::Unknown;
     }
+
 }
 
 fn suggest_action(door_status: DoorStatus, is_daylight: bool) -> DoorAction {
@@ -204,74 +257,35 @@ fn suggest_action(door_status: DoorStatus, is_daylight: bool) -> DoorAction {
     }
 }
 
-async fn politely_carry_out_suggestion(suggestion: DoorAction, client: Option<RequestBuilder>) -> String {
-    match client {
-        Some(client) => {
-            match suggestion {
-                DoorAction::Open => {
-                    let door_record = DoorRecord {
-                        direction: "up".to_string(),
-                        amount: 10,
-                        executed: false
-                    };
+async fn politely_carry_out_suggestion(suggestion: DoorAction, pool: &SqlitePool) -> () {
 
-                    let door_request_json = match serde_json::to_string(&door_record) {
-                        Ok(door_request_json) => door_request_json,
-                        Err(e) => {
-                            error!("carry_out() parse fail on Open: {}", e);
-                            return "Error".to_string();
-                        }
-                    };
+    let mut action_string = String::new();
 
-                    let response = client.body(door_request_json).send().await;
-
-                    match response {
-                        Ok(_) => {
-                            info!("Opened");
-                            return "Opened".to_string();
-                        },
-                        Err(e) => {
-                            error!("carry_out() response fail on Open: {}", e);
-                            return "Error".to_string();
-                        }
-                    }
-                },
-                DoorAction::Close => {
-                    let door_record = DoorRecord {
-                        direction: "down".to_string(),
-                        amount: 10,
-                        executed: false
-                    };
-
-                    let door_request_json = match serde_json::to_string(&door_record) {
-                        Ok(door_request_json) => door_request_json,
-                        Err(e) => {
-                            error!("carry_out() parse fail on Close: {}", e);
-                            return "Error".to_string();
-                        }
-                    };
-
-                    let response = client.body(door_request_json).send().await;
-
-                    match response {
-                        Ok(_) => {
-                            info!("Closed");
-                            return "Closed".to_string();
-                        },
-                        Err(e) => {
-                            error!("carry_out() response fail on Close: {}", e);
-                            return "Error".to_string();
-                        }
-                    }
-                },
-                DoorAction::Pass => {
-                    return "Pass".to_string();
-                }
-            }
+    match suggestion {
+        DoorAction::Open => {
+            action_string = "0,1,10".to_string();
         },
-        None => {
-            error!("carry_out() no client fail");
-            return "No client".to_string();
+        DoorAction::Close => {
+            action_string = "0,0,10".to_string();
+        },
+        DoorAction::Pass => {
+            action_string = "pass".to_string();
         }
     }
+
+    // update db
+    if action_string != "pass" {
+        match sqlx::query(&format!("REPLACE INTO door_status (id, executed, up, amount) VALUES (1,{})", action_string)).execute(pool).await {
+            Ok(_) => {
+                info!("insert success");
+            },
+            Err(error) => {
+                error!("{}", error);
+                panic!("error: {}", error);
+            }
+        }
+    }
+
+
+
 }

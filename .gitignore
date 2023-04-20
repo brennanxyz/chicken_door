@@ -2,3 +2,4 @@ target/
 .config.toml
 **.log
 .DS_Store
+chicken_door.db*
