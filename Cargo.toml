@@ -6,12 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+axum = {version = "0.6.16", features = ["json"]}
 chrono = "0.4.24"
 fern = "0.6.1"
 log = {version = "0.4.17", features = ["release_max_level_warn"]}
-openssl = { version = "0.10", features = ["vendored"] }
-reqwest = {version = "0.11.14", features = ["json"]}
+openssl = {version = "0.10", features = ["vendored"]}
 serde = {version = "1.0.159", features = ["derive"]}
 serde_json = "1.0.95"
+sqlx = {version = "0.6.3", features = ["runtime-tokio-native-tls", "sqlite"]}
 tokio = {version = "1.14.0", features = ["full"]}
 toml = "0.5.8"
