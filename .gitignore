@@ -3,3 +3,4 @@ db/
 logs/
 .config.toml
 .DS_Store
+docker-compose.yaml
