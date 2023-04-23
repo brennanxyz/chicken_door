@@ -198,9 +198,27 @@ async fn update_req_door_status(Extension(config): Extension<Config>, headers: H
         // add entry to pool
         match door_record.over_ride {
             Some(1) => {
-                info!("updating door status with override");
+                info!("updating door status with override 1");
                 let (_, ordinal) = get_now(config.hour_offset);
-                let payload = format!("{},{},{},{:?},{}", door_record.executed, door_record.up, door_record.amount, 1, ordinal);
+                let payload = format!("{},{},{},{},{}", door_record.executed, door_record.up, door_record.amount, 1, ordinal);
+                match sqlx::query(
+                    &format!("REPLACE INTO door_status (id, executed, up, amount, over_ride, over_ride_day) VALUES (1,{})", payload))
+                    .execute(&pool)
+                    .await 
+                {
+                    Ok(_) => {
+                        info!("insert success");
+                    },
+                    Err(error) => {
+                        error!("{}", error);
+                        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+                    }
+                }
+            },
+            Some(0) => {
+                info!("updating door status with override 0");
+                let (_, ordinal) = get_now(config.hour_offset);
+                let payload = format!("{},{},{},{},{}", door_record.executed, door_record.up, door_record.amount, 0, ordinal);
                 match sqlx::query(
                     &format!("REPLACE INTO door_status (id, executed, up, amount, over_ride, over_ride_day) VALUES (1,{})", payload))
                     .execute(&pool)
@@ -362,8 +380,6 @@ async fn get_door_status(pool: &SqlitePool) -> DoorStatus {
 }
 
 async fn suggest_action(door_status: DoorStatus, is_daylight: bool, pool: &SqlitePool, today: u16) -> DoorAction {
-    println!("door status: {:?}", door_status);
-
     // retrieve first entry from db
     let row = match sqlx::query("SELECT * FROM door_status ORDER BY id DESC LIMIT 1")
         .fetch_one(pool).await {
