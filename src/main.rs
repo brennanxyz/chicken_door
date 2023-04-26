@@ -3,7 +3,7 @@ use std::io::Read;
 use std::thread;
 use std::time;
 
-use axum::{http::{header::HeaderMap, StatusCode}, routing::{get, put}, Router, Json, Extension};
+use axum::{http::{header::HeaderMap, Method, StatusCode}, routing::{get, put}, Router, Json, Extension};
 use chrono::{Datelike, Duration, Local, Timelike, Utc};
 use fern;
 use log::{info, warn, error};
@@ -12,6 +12,7 @@ use serde_json;
 use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase, Row};
 use tokio;
 use toml;
+use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Deserialize)]
 struct SunHappening {
@@ -92,7 +93,12 @@ async fn main() {
         .route("/", get(|| async { "oh, Chicken, Chicken, you can't roost too high for me" }))
         .route("/get_door_status", get(get_req_door_status))
         .route("/update_door_status", put(update_req_door_status))
-        .layer(Extension(config_clone));
+        .layer(Extension(config_clone))
+        .layer(
+            CorsLayer::new()
+                .allow_methods([Method::GET, Method::PUT])
+                .allow_origin(Any)
+        );
 
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
         .serve(app.into_make_service())
