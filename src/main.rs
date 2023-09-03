@@ -310,7 +310,7 @@ async fn initialize() -> (Config, Vec<SunHappening>) {
         }
     
         // add entry to pool
-        match sqlx::query("INSERT INTO door_status (executed, up, amount, over_ride, over_ride_day) VALUES (1, 1, 10, 0, 0)").execute(&pool).await {
+        match sqlx::query("INSERT INTO door_status (executed, up, amount, over_ride, over_ride_day) VALUES (1, 1, 5, 0, 0)").execute(&pool).await {
             Ok(_) => info!("create table success (initialize)"),
             Err(error) => {
                 error!("creat table fail (initialize): {}", error);
@@ -434,10 +434,10 @@ async fn politely_carry_out_suggestion(suggestion: DoorAction, pool: &SqlitePool
 
     match suggestion {
         DoorAction::Open => {
-            action_string = "0,1,10".to_string();
+            action_string = "0,1,5".to_string();
         },
         DoorAction::Close => {
-            action_string = "0,0,10".to_string();
+            action_string = "0,0,5".to_string();
         },
         DoorAction::Pass => {
             action_string = "pass".to_string();
