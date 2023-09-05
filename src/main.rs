@@ -437,7 +437,7 @@ async fn politely_carry_out_suggestion(suggestion: DoorAction, pool: &SqlitePool
             action_string = "0,1,5".to_string();
         },
         DoorAction::Close => {
-            action_string = "0,0,5".to_string();
+            action_string = "0,0,3".to_string();
         },
         DoorAction::Pass => {
             action_string = "pass".to_string();
