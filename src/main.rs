@@ -40,7 +40,6 @@ enum DoorAction {
 struct DoorRecord {
     executed: u8,
     up: u8,
-    amount: u8,
     over_ride: Option<u8>,
     over_ride_day: Option<u16>,
 }
@@ -155,7 +154,6 @@ async fn get_req_door_status(Extension(config): Extension<Config>, headers: Head
         let door_record = DoorRecord {
             executed: column_vals[0] as u8,
             up: column_vals[1] as u8,
-            amount: column_vals[2] as u8,
             over_ride: Some(column_vals[3] as u8),
             over_ride_day: Some(column_vals[4]),
         };
@@ -206,7 +204,7 @@ async fn update_req_door_status(Extension(config): Extension<Config>, headers: H
             Some(1) => {
                 info!("updating door status with override 1");
                 let (_, ordinal) = get_now(config.hour_offset);
-                let payload = format!("{},{},{},{},{}", door_record.executed, door_record.up, door_record.amount, 1, ordinal);
+                let payload = format!("{},{},{},{}", door_record.executed, door_record.up, 1, ordinal);
                 match sqlx::query(
                     &format!("REPLACE INTO door_status (id, executed, up, amount, over_ride, over_ride_day) VALUES (1,{})", payload))
                     .execute(&pool)
@@ -224,7 +222,7 @@ async fn update_req_door_status(Extension(config): Extension<Config>, headers: H
             Some(0) => {
                 info!("updating door status with override 0");
                 let (_, ordinal) = get_now(config.hour_offset);
-                let payload = format!("{},{},{},{},{}", door_record.executed, door_record.up, door_record.amount, 0, ordinal);
+                let payload = format!("{},{},{},{}", door_record.executed, door_record.up, 0, ordinal);
                 match sqlx::query(
                     &format!("REPLACE INTO door_status (id, executed, up, amount, over_ride, over_ride_day) VALUES (1,{})", payload))
                     .execute(&pool)
@@ -242,7 +240,7 @@ async fn update_req_door_status(Extension(config): Extension<Config>, headers: H
             _ => {
                 info!("updating door status without override");
                 match sqlx::query(
-                    &format!("UPDATE door_status SET executed={}, up={}, amount={} WHERE id=1", door_record.executed, door_record.up, door_record.amount))
+                    &format!("UPDATE door_status SET executed={}, up={} WHERE id=1", door_record.executed, door_record.up))
                     .execute(&pool)
                     .await 
                 {
@@ -301,7 +299,7 @@ async fn initialize() -> (Config, Vec<SunHappening>) {
         };
         
         //run migrations
-        match sqlx::query("CREATE TABLE IF NOT EXISTS door_status (id INTEGER PRIMARY KEY NOT NULL, executed INTEGER NOT NULL, up INTEGER NOT NULL, amount INTEGER NOT NULL, over_ride INTEGER NOT NULL, over_ride_day INTEGER NOT NULL);").execute(&pool).await {
+        match sqlx::query("CREATE TABLE IF NOT EXISTS door_status (id INTEGER PRIMARY KEY NOT NULL, executed INTEGER NOT NULL, up INTEGER NOT NULL, over_ride INTEGER NOT NULL, over_ride_day INTEGER NOT NULL);").execute(&pool).await {
             Ok(_) => info!("create table success"),
             Err(error) => {
                 error!("sql migration error (initialize): {}", error);
@@ -310,7 +308,7 @@ async fn initialize() -> (Config, Vec<SunHappening>) {
         }
     
         // add entry to pool
-        match sqlx::query("INSERT INTO door_status (executed, up, amount, over_ride, over_ride_day) VALUES (1, 1, 5, 0, 0)").execute(&pool).await {
+        match sqlx::query("INSERT INTO door_status (executed, up, over_ride, over_ride_day) VALUES (1, 1, 0, 0)").execute(&pool).await {
             Ok(_) => info!("create table success (initialize)"),
             Err(error) => {
                 error!("creat table fail (initialize): {}", error);
@@ -367,7 +365,7 @@ async fn get_door_status(pool: &SqlitePool) -> DoorStatus {
         }
     };
       
-    let columns = vec!["executed", "up", "amount"];
+    let columns = vec!["executed", "up"];
 
     let column_vals: Vec<u16> = columns.into_iter().map(|col_name| row.get::<u16, &str>(col_name)).collect();
 
@@ -396,11 +394,11 @@ async fn suggest_action(door_status: DoorStatus, is_daylight: bool, pool: &Sqlit
         }
     };
       
-    let columns = vec!["executed", "up", "amount", "over_ride", "over_ride_day"];
+    let columns = vec!["executed", "up", "over_ride", "over_ride_day"];
 
     let column_vals: Vec<u16> = columns.into_iter().map(|col_name| row.get::<u16, &str>(col_name)).collect();
 
-    if column_vals[3] == 1 && column_vals[4] == today {
+    if column_vals[2] == 1 && column_vals[3] == today {
         info!("over ride in effect");
         return DoorAction::Pass;
     }
@@ -434,10 +432,10 @@ async fn politely_carry_out_suggestion(suggestion: DoorAction, pool: &SqlitePool
 
     match suggestion {
         DoorAction::Open => {
-            action_string = "0,1,2".to_string();
+            action_string = "0,1".to_string();
         },
         DoorAction::Close => {
-            action_string = "0,0,2".to_string();
+            action_string = "0,0".to_string();
         },
         DoorAction::Pass => {
             action_string = "pass".to_string();
@@ -447,7 +445,7 @@ async fn politely_carry_out_suggestion(suggestion: DoorAction, pool: &SqlitePool
     // update db
     if action_string != "pass" {
         match sqlx::query(
-            &format!("REPLACE INTO door_status (id, executed, up, amount, over_ride, over_ride_day) VALUES (1,{},{})", action_string, "0,0"))
+            &format!("REPLACE INTO door_status (id, executed, up, over_ride, over_ride_day) VALUES (1,{},{})", action_string, "0,0"))
             .execute(pool)
             .await 
         {
