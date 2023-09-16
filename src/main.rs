@@ -147,15 +147,15 @@ async fn get_req_door_status(Extension(config): Extension<Config>, headers: Head
             }
         };
           
-        let columns = vec!["executed", "up", "amount", "over_ride", "over_ride_day"];
+        let columns = vec!["executed", "up", "over_ride", "over_ride_day"];
     
         let column_vals: Vec<u16> = columns.into_iter().map(|col_name| row.get::<u16, &str>(col_name)).collect();
     
         let door_record = DoorRecord {
             executed: column_vals[0] as u8,
             up: column_vals[1] as u8,
-            over_ride: Some(column_vals[3] as u8),
-            over_ride_day: Some(column_vals[4]),
+            over_ride: Some(column_vals[2] as u8),
+            over_ride_day: Some(column_vals[3]),
         };
     
         return Ok(Json(door_record));
@@ -206,7 +206,7 @@ async fn update_req_door_status(Extension(config): Extension<Config>, headers: H
                 let (_, ordinal) = get_now(config.hour_offset);
                 let payload = format!("{},{},{},{}", door_record.executed, door_record.up, 1, ordinal);
                 match sqlx::query(
-                    &format!("REPLACE INTO door_status (id, executed, up, amount, over_ride, over_ride_day) VALUES (1,{})", payload))
+                    &format!("REPLACE INTO door_status (id, executed, up, over_ride, over_ride_day) VALUES (1,{})", payload))
                     .execute(&pool)
                     .await 
                 {
@@ -224,7 +224,7 @@ async fn update_req_door_status(Extension(config): Extension<Config>, headers: H
                 let (_, ordinal) = get_now(config.hour_offset);
                 let payload = format!("{},{},{},{}", door_record.executed, door_record.up, 0, ordinal);
                 match sqlx::query(
-                    &format!("REPLACE INTO door_status (id, executed, up, amount, over_ride, over_ride_day) VALUES (1,{})", payload))
+                    &format!("REPLACE INTO door_status (id, executed, up, over_ride, over_ride_day) VALUES (1,{})", payload))
                     .execute(&pool)
                     .await 
                 {
