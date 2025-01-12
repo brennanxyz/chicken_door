@@ -1,19 +1,18 @@
 [package]
-name = "chicken_door"
-version = "0.1.0"
+name = "chicken_server"
+version = "0.2.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-axum = {version = "0.6.16", features = ["json"]}
-chrono = "0.4.24"
-fern = "0.6.1"
-log = {version = "0.4.17", features = ["release_max_level_warn"]}
-openssl = {version = "0.10", features = ["vendored"]}
-serde = {version = "1.0.159", features = ["derive"]}
-serde_json = "1.0.95"
-sqlx = {version = "0.6.3", features = ["runtime-tokio-native-tls", "sqlite"]}
-tokio = {version = "1.14.0", features = ["full"]}
-toml = "0.5.8"
-tower-http = {version = "0.4.0", features = ["cors"]}
+axum = { version="0.8.1", features=["json", "macros"] }
+chrono = { version="0.4.39" }
+openssl = { version="0.10.68", features=["vendored"] }
+serde = { version="1.0.217", features=["derive"] }
+serde_json = { version="1.0.135" }
+tokio = { version="1.43.0", features=["full"] }
+toml = { version="0.8.19" }
+tower-http = { version="0.6.2", features=["cors"] }
+tracing = { version="0.1.41" }
+tracing-appender = { version="0.2.3" }
+tracing-log = { version="0.2.0" }
+tracing-subscriber = { version="0.3.19", features=["ansi", "fmt"] }
